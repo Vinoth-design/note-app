@@ -9,11 +9,24 @@ dotenv.config();
 // Lazy-initialized GoogleGenAI client
 let aiClient: GoogleGenAI | null = null;
 
-function getAiClient(): GoogleGenAI {
+function getAiClient(): GoogleGenAI | null {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
+    let key = process.env.GEMINI_API_KEY;
     if (!key) {
-      throw new Error("GEMINI_API_KEY environment variable is required");
+      try {
+        const fs = require('fs');
+        const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+        if (fs.existsSync(configPath)) {
+          const raw = fs.readFileSync(configPath, 'utf8');
+          const parsed = JSON.parse(raw);
+          key = parsed.apiKey;
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+    if (!key) {
+      return null;
     }
     aiClient = new GoogleGenAI({
       apiKey: key,
@@ -43,25 +56,28 @@ async function startServer() {
       }
 
       const ai = getAiClient();
-      const prompt = `Summarize the following task description into an extremely concise, short single sentence or single phrase (maximum 8-10 words) that can fit in a text input field as a brief summary notes. Keep it clear, action-oriented, and minimal. Do not use quotes, bold text, or introductory remarks. Just return the direct summary.\n\nDescription: ${description}`;
-
-      const modelsToTry = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
       let summary = "";
 
-      for (const model of modelsToTry) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: prompt,
-          });
-          summary = response.text?.trim() || "";
-          if (summary) break;
-        } catch (err: any) {
-          console.warn(`Summarize failed with model ${model}:`, err?.message || err);
+      if (ai) {
+        const prompt = `Summarize the following task description into an extremely concise, short single sentence or single phrase (maximum 8-10 words) that can fit in a text input field as a brief summary notes. Keep it clear, action-oriented, and minimal. Do not use quotes, bold text, or introductory remarks. Just return the direct summary.\n\nDescription: ${description}`;
+
+        const modelsToTry = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+
+        for (const model of modelsToTry) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: prompt,
+            });
+            summary = response.text?.trim() || "";
+            if (summary) break;
+          } catch (err: any) {
+            console.warn(`Summarize failed with model ${model}:`, err?.message || err);
+          }
         }
       }
 
-      // Graceful fallback if Gemini service is temporarily overloaded
+      // Graceful fallback if Gemini service is temporarily overloaded or key missing
       if (!summary) {
         const cleaned = description.replace(/<[^>]*>/g, '').trim();
         const words = cleaned.split(/\s+/).slice(0, 10).join(' ');
@@ -86,7 +102,8 @@ async function startServer() {
       const ai = getAiClient();
       const todayRef = currentDate || new Date().toISOString().split('T')[0];
 
-      const systemInstruction = `You are an intelligent task parsing assistant. 
+      if (ai) {
+        const systemInstruction = `You are an intelligent task parsing assistant. 
 The user spoke a thought, task request, or meeting notes via voice speech-to-text.
 Your goal is to extract:
 1. "title": A concise, crisp, actionable Task Name (strictly 3 to 8 words maximum, e.g. "Prepare Q3 Marketing Pitch Deck", "Review Client Agreement", "Fix Login API Bug").
@@ -95,40 +112,52 @@ Your goal is to extract:
 
 Return clean JSON matching the schema.`;
 
-      const prompt = `User voice transcript: "${transcript}"`;
+        const prompt = `User voice transcript: "${transcript}"`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: {
-                type: Type.STRING,
-                description: "Concise actionable task title (3-8 words).",
+        const response = await ai.models.generateContent({
+          model: "gemini-3.7-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: {
+                  type: Type.STRING,
+                  description: "Concise actionable task title (3-8 words).",
+                },
+                description: {
+                  type: Type.STRING,
+                  description: "The rest of the transcribed context, notes, requirements, or bullet points.",
+                },
+                scheduledDate: {
+                  type: Type.STRING,
+                  description: "Resolved date in YYYY-MM-DD format if mentioned, otherwise null or empty.",
+                },
               },
-              description: {
-                type: Type.STRING,
-                description: "The rest of the transcribed context, notes, requirements, or bullet points.",
-              },
-              scheduledDate: {
-                type: Type.STRING,
-                description: "Resolved date in YYYY-MM-DD format if mentioned, otherwise null or empty.",
-              },
+              required: ["title", "description"],
             },
-            required: ["title", "description"],
           },
-        },
-      });
+        });
 
-      const parsed = JSON.parse(response.text || "{}");
-      res.json({
-        title: parsed.title || transcript.slice(0, 50),
-        description: parsed.description || "",
-        scheduledDate: parsed.scheduledDate || null,
+        const parsed = JSON.parse(response.text || "{}");
+        return res.json({
+          title: parsed.title || transcript.slice(0, 50),
+          description: parsed.description || "",
+          scheduledDate: parsed.scheduledDate || null,
+          rawTranscript: transcript,
+        });
+      }
+
+      // Fallback NLP extraction when AI client is not configured
+      const words = transcript.trim().split(/\s+/);
+      const title = words.slice(0, 6).join(" ");
+      const description = words.length > 6 ? words.slice(6).join(" ") : "";
+      return res.json({
+        title: title || "New Task",
+        description: description || "",
+        scheduledDate: null,
         rawTranscript: transcript,
       });
     } catch (error: any) {
@@ -156,6 +185,9 @@ Return clean JSON matching the schema.`;
       }
 
       const ai = getAiClient();
+      if (!ai) {
+        return res.status(400).json({ error: "Gemini API Key is not configured on server. Please set GEMINI_API_KEY or enter your key in settings." });
+      }
       const todayRef = currentDate || new Date().toISOString().split('T')[0];
 
       // 1. Transcribe audio using gemini-3.5-transcribe or gemini-3.7-flash
