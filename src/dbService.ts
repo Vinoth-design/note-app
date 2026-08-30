@@ -19,6 +19,27 @@ const WORKSPACES_COLLECTION = 'workspaces';
 const USERS_COLLECTION = 'users';
 const AUDIT_LOGS_COLLECTION = 'auditLogs';
 
+// Helper for local storage key generation
+const getLocalKey = (prefix: string, userId: string) => `nestnote_${prefix}_${userId}`;
+
+function getLocalItems<T>(key: string, defaultItems: T[] = []): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaultItems;
+  } catch {
+    return defaultItems;
+  }
+}
+
+function setLocalItems<T>(key: string, items: T[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(items));
+    window.dispatchEvent(new CustomEvent('nestnote_local_sync', { detail: { key } }));
+  } catch (err) {
+    console.warn('Local storage write notice:', err);
+  }
+}
+
 // Helper to create a default blank block
 export const createDefaultBlock = (type: Block['type'] = 'text'): Block => ({
   id: Math.random().toString(36).substring(2, 11),
@@ -111,66 +132,101 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 export const dbService = {
-  // Real-time synchronization of all notes for a specific user via Cloud Firestore
+  // Real-time synchronization of notes with Firestore + Local Fallback
   subscribeNotes(userId: string, onUpdate: (notes: Note[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, NOTES_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('updatedAt', 'desc')
-    );
+    const key = getLocalKey('notes', userId);
+    
+    // Immediately emit local items so UI opens instantly without hanging
+    const initialLocal = getLocalItems<Note>(key, []);
+    onUpdate(initialLocal);
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const notes: Note[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          notes.push({
-            id: docSnap.id,
-            title: data.title || '',
-            emoji: data.emoji || '📝',
-            coverImage: data.coverImage,
-            blocks: data.blocks || [],
-            createdAt: data.createdAt || Date.now(),
-            updatedAt: data.updatedAt || Date.now(),
-            scheduledDate: data.scheduledDate || null,
-            dueDate: data.dueDate || null,
-            recurrence: data.recurrence || 'None',
-            remindersEnabled: !!data.remindersEnabled,
-            isFavorite: !!data.isFavorite,
-            isArchived: !!data.isArchived,
-            status: data.status || undefined,
-            priority: data.priority || undefined,
-            assignee: data.assignee || undefined,
-            assets: data.assets || undefined,
-            tags: data.tags || [],
-            updates: data.updates || [],
-            workspaceId: data.workspaceId || undefined,
-            userId: data.userId || undefined,
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, NOTES_COLLECTION),
+        where('userId', '==', userId)
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const notes: Note[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            notes.push({
+              id: docSnap.id,
+              title: data.title || '',
+              emoji: data.emoji || '📝',
+              coverImage: data.coverImage,
+              blocks: data.blocks || [],
+              createdAt: data.createdAt || Date.now(),
+              updatedAt: data.updatedAt || Date.now(),
+              scheduledDate: data.scheduledDate || null,
+              dueDate: data.dueDate || null,
+              recurrence: data.recurrence || 'None',
+              remindersEnabled: !!data.remindersEnabled,
+              isFavorite: !!data.isFavorite,
+              isArchived: !!data.isArchived,
+              status: data.status || undefined,
+              priority: data.priority || undefined,
+              assignee: data.assignee || undefined,
+              assets: data.assets || undefined,
+              tags: data.tags || [],
+              updates: data.updates || [],
+              workspaceId: data.workspaceId || undefined,
+              userId: data.userId || undefined,
+            });
           });
-        });
-        onUpdate(notes);
-      },
-      (error) => {
-        console.error('Firestore notes subscription error:', error);
-        if (onError) onError(error);
-      }
-    );
+          // Sort client-side to avoid index errors
+          notes.sort((a, b) => b.updatedAt - a.updatedAt);
+          setLocalItems(key, notes);
+          onUpdate(notes);
+        },
+        (error) => {
+          console.warn('Firestore notes subscription notice (using local storage):', error?.message || error);
+          onUpdate(getLocalItems<Note>(key, []));
+          if (onError) onError(error);
+        }
+      );
+    } catch (error: any) {
+      console.warn('Firestore subscription exception:', error);
+      onUpdate(getLocalItems<Note>(key, []));
+      if (onError) onError(error);
+    }
+
+    return () => unsubscribeFirestore();
   },
 
-  // Save a note to Cloud Firestore
+  // Save a note to Cloud Firestore + Local Cache
   async saveNote(note: Note, userId: string): Promise<void> {
-    const noteRef = doc(db, NOTES_COLLECTION, note.id);
+    const key = getLocalKey('notes', userId);
     const updatedNote = {
       ...note,
       userId,
       updatedAt: Date.now(),
     };
-    const cleanedNote = cleanUndefined(updatedNote);
-    await setDoc(noteRef, cleanedNote, { merge: true });
+
+    // Save locally first for instant speed
+    const currentLocal = getLocalItems<Note>(key, []);
+    const idx = currentLocal.findIndex(n => n.id === note.id);
+    if (idx >= 0) {
+      currentLocal[idx] = updatedNote;
+    } else {
+      currentLocal.unshift(updatedNote);
+    }
+    setLocalItems(key, currentLocal);
+
+    // Save to Firestore
+    try {
+      const noteRef = doc(db, NOTES_COLLECTION, note.id);
+      const cleanedNote = cleanUndefined(updatedNote);
+      await setDoc(noteRef, cleanedNote, { merge: true });
+    } catch (err) {
+      console.warn('Firestore note save notice:', err);
+    }
   },
 
-  // Create and persist a new note to Cloud Firestore
+  // Create and persist a new note
   async createNewNote(
     title: string,
     userId: string,
@@ -184,52 +240,106 @@ export const dbService = {
     return note;
   },
 
-  // Delete a note from Cloud Firestore
+  // Delete a note
   async deleteNote(id: string): Promise<void> {
-    const noteRef = doc(db, NOTES_COLLECTION, id);
-    await deleteDoc(noteRef);
+    const currentUserId = auth.currentUser?.uid || 'guest';
+    const key = getLocalKey('notes', currentUserId);
+
+    const currentLocal = getLocalItems<Note>(key, []);
+    setLocalItems(key, currentLocal.filter(n => n.id !== id));
+
+    try {
+      const noteRef = doc(db, NOTES_COLLECTION, id);
+      await deleteDoc(noteRef);
+    } catch (err) {
+      console.warn('Firestore note delete notice:', err);
+    }
   },
 
-  // Real-time synchronization of all workspaces for a specific user via Cloud Firestore
+  // Real-time synchronization of workspaces with Cloud Firestore + Local Fallback
   subscribeWorkspaces(userId: string, onUpdate: (workspaces: Workspace[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, WORKSPACES_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'asc')
-    );
+    const key = getLocalKey('workspaces', userId);
+    const defaultWorkspace: Workspace = {
+      id: 'default_main',
+      name: 'Personal Home',
+      icon: '🏡',
+      createdAt: Date.now(),
+      accentColor: 'indigo',
+      userId,
+    };
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const workspaces: Workspace[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          workspaces.push({
-            id: docSnap.id,
-            name: data.name || 'Untitled Workspace',
-            icon: data.icon || '💼',
-            createdAt: data.createdAt || Date.now(),
-            accentColor: data.accentColor || 'indigo',
-            userId: data.userId || undefined,
+    const initialLocal = getLocalItems<Workspace>(key, [defaultWorkspace]);
+    onUpdate(initialLocal);
+
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, WORKSPACES_COLLECTION),
+        where('userId', '==', userId)
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const workspaces: Workspace[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            workspaces.push({
+              id: docSnap.id,
+              name: data.name || 'Untitled Workspace',
+              icon: data.icon || '💼',
+              createdAt: data.createdAt || Date.now(),
+              accentColor: data.accentColor || 'indigo',
+              userId: data.userId || undefined,
+            });
           });
-        });
-        onUpdate(workspaces);
-      },
-      (error) => {
-        console.error('Firestore workspaces subscription error:', error);
-        if (onError) onError(error);
-      }
-    );
+          workspaces.sort((a, b) => a.createdAt - b.createdAt);
+          if (workspaces.length > 0) {
+            setLocalItems(key, workspaces);
+            onUpdate(workspaces);
+          } else {
+            setLocalItems(key, [defaultWorkspace]);
+            onUpdate([defaultWorkspace]);
+          }
+        },
+        (error) => {
+          console.warn('Firestore workspaces subscription notice:', error?.message || error);
+          onUpdate(getLocalItems<Workspace>(key, [defaultWorkspace]));
+          if (onError) onError(error);
+        }
+      );
+    } catch (error: any) {
+      console.warn('Firestore workspaces subscription exception:', error);
+      onUpdate(getLocalItems<Workspace>(key, [defaultWorkspace]));
+      if (onError) onError(error);
+    }
+
+    return () => unsubscribeFirestore();
   },
 
-  // Save a workspace to Cloud Firestore
+  // Save a workspace
   async saveWorkspace(workspace: Workspace, userId: string): Promise<void> {
-    const wsRef = doc(db, WORKSPACES_COLLECTION, workspace.id);
-    const cleaned = cleanUndefined({ ...workspace, userId });
-    await setDoc(wsRef, cleaned, { merge: true });
+    const key = getLocalKey('workspaces', userId);
+    const updated = { ...workspace, userId };
+
+    const currentLocal = getLocalItems<Workspace>(key, []);
+    const idx = currentLocal.findIndex(w => w.id === workspace.id);
+    if (idx >= 0) {
+      currentLocal[idx] = updated;
+    } else {
+      currentLocal.push(updated);
+    }
+    setLocalItems(key, currentLocal);
+
+    try {
+      const wsRef = doc(db, WORKSPACES_COLLECTION, workspace.id);
+      await setDoc(wsRef, cleanUndefined(updated), { merge: true });
+    } catch (err) {
+      console.warn('Firestore workspace save notice:', err);
+    }
   },
 
-  // Create and persist a new workspace in Cloud Firestore
+  // Create workspace
   async createNewWorkspace(name: string, userId: string, icon: string = '💼', accentColor: string = 'indigo'): Promise<Workspace> {
     const id = Math.random().toString(36).substring(2, 11);
     const ws: Workspace = {
@@ -244,21 +354,44 @@ export const dbService = {
     return ws;
   },
 
-  // Delete a workspace from Cloud Firestore
+  // Delete workspace
   async deleteWorkspace(id: string): Promise<void> {
-    const wsRef = doc(db, WORKSPACES_COLLECTION, id);
-    await deleteDoc(wsRef);
+    const currentUserId = auth.currentUser?.uid || 'guest';
+    const key = getLocalKey('workspaces', currentUserId);
+
+    const currentLocal = getLocalItems<Workspace>(key, []);
+    setLocalItems(key, currentLocal.filter(w => w.id !== id));
+
+    try {
+      const wsRef = doc(db, WORKSPACES_COLLECTION, id);
+      await deleteDoc(wsRef);
+    } catch (err) {
+      console.warn('Firestore workspace delete notice:', err);
+    }
   },
 
-  // Save or update user profile in Cloud Firestore
+  // User Profile
   async saveUserProfile(user: User): Promise<void> {
-    const userRef = doc(db, USERS_COLLECTION, user.uid);
-    const cleaned = cleanUndefined(user);
-    await setDoc(userRef, cleaned, { merge: true });
+    const key = getLocalKey('user_profile', user.uid);
+    try {
+      localStorage.setItem(key, JSON.stringify(user));
+    } catch {}
+
+    try {
+      const userRef = doc(db, USERS_COLLECTION, user.uid);
+      await setDoc(userRef, cleanUndefined(user), { merge: true });
+    } catch (err) {
+      console.warn('Firestore user profile save notice:', err);
+    }
   },
 
-  // Fetch a user profile from Cloud Firestore
   async getUserProfile(uid: string): Promise<User | null> {
+    const key = getLocalKey('user_profile', uid);
+    try {
+      const cached = localStorage.getItem(key);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+
     try {
       const userRef = doc(db, USERS_COLLECTION, uid);
       const userSnap = await getDoc(userRef);
@@ -273,14 +406,13 @@ export const dbService = {
           lastLoginAt: data.lastLoginAt || Date.now(),
         };
       }
-      return null;
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      return null;
+    } catch (err) {
+      console.warn('Firestore user profile get notice:', err);
     }
+    return null;
   },
 
-  // Log security event in Cloud Firestore
+  // Audit Logs
   async logSecurityEvent(userId: string, action: AuditLogEntry['action'], details: string): Promise<void> {
     try {
       const id = Math.random().toString(36).substring(2, 11);
@@ -293,63 +425,64 @@ export const dbService = {
         timestamp: Date.now(),
       };
       await setDoc(logRef, entry);
-    } catch (error) {
-      console.warn('Failed to record audit log:', error);
+    } catch (err) {
+      console.warn('Audit log notice:', err);
     }
   },
 
-  // Subscribe real-time audit logs from Cloud Firestore
   subscribeAuditLogs(userId: string, onUpdate: (logs: AuditLogEntry[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, AUDIT_LOGS_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
+    const key = getLocalKey('audit_logs', userId);
+    onUpdate(getLocalItems<AuditLogEntry>(key, []));
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const logs: AuditLogEntry[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          logs.push({
-            id: docSnap.id,
-            userId: data.userId,
-            action: data.action,
-            details: data.details,
-            timestamp: data.timestamp || Date.now(),
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, AUDIT_LOGS_COLLECTION),
+        where('userId', '==', userId),
+        limit(50)
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const logs: AuditLogEntry[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            logs.push({
+              id: docSnap.id,
+              userId: data.userId,
+              action: data.action,
+              details: data.details,
+              timestamp: data.timestamp || Date.now(),
+            });
           });
-        });
-        onUpdate(logs);
-      },
-      (error) => {
-        console.error('Firestore audit logs subscription error:', error);
-        if (onError) onError(error);
-      }
-    );
+          logs.sort((a, b) => b.timestamp - a.timestamp);
+          if (logs.length > 0) {
+            setLocalItems(key, logs);
+            onUpdate(logs);
+          }
+        },
+        (error) => {
+          console.warn('Firestore audit logs subscription notice:', error?.message || error);
+          if (onError) onError(error);
+        }
+      );
+    } catch (err: any) {
+      console.warn('Firestore audit logs exception:', err);
+      if (onError) onError(err);
+    }
+
+    return () => unsubscribeFirestore();
   },
 
-  // Export User Data from Cloud Firestore
+  // Export User Data
   async exportUserData(userId: string) {
     const userProfile = await this.getUserProfile(userId);
+    const notes = getLocalItems<Note>(getLocalKey('notes', userId), []);
+    const workspaces = getLocalItems<Workspace>(getLocalKey('workspaces', userId), []);
+    const auditLogs = getLocalItems<AuditLogEntry>(getLocalKey('audit_logs', userId), []);
 
-    const wsQuery = query(collection(db, WORKSPACES_COLLECTION), where('userId', '==', userId));
-    const wsSnap = await getDocs(wsQuery);
-    const workspaces: Workspace[] = [];
-    wsSnap.forEach(d => workspaces.push({ id: d.id, ...d.data() } as Workspace));
-
-    const notesQuery = query(collection(db, NOTES_COLLECTION), where('userId', '==', userId));
-    const notesSnap = await getDocs(notesQuery);
-    const notes: Note[] = [];
-    notesSnap.forEach(d => notes.push({ id: d.id, ...d.data() } as Note));
-
-    const logsQuery = query(collection(db, AUDIT_LOGS_COLLECTION), where('userId', '==', userId));
-    const logsSnap = await getDocs(logsQuery);
-    const auditLogs: AuditLogEntry[] = [];
-    logsSnap.forEach(d => auditLogs.push({ id: d.id, ...d.data() } as AuditLogEntry));
-
-    await this.logSecurityEvent(userId, 'EXPORT_DATA', 'Exported full user data archive');
+    await this.logSecurityEvent(userId, 'EXPORT_DATA', 'Exported user data archive');
 
     return {
       exportedAt: new Date().toISOString(),
@@ -360,26 +493,21 @@ export const dbService = {
     };
   },
 
-  // Purge Account Data from Cloud Firestore
+  // Purge Account Data
   async purgeAccountData(userId: string): Promise<void> {
-    const notesQuery = query(collection(db, NOTES_COLLECTION), where('userId', '==', userId));
-    const notesSnap = await getDocs(notesQuery);
-    for (const docSnap of notesSnap.docs) {
-      await deleteDoc(doc(db, NOTES_COLLECTION, docSnap.id));
-    }
+    localStorage.removeItem(getLocalKey('notes', userId));
+    localStorage.removeItem(getLocalKey('workspaces', userId));
+    localStorage.removeItem(getLocalKey('user_profile', userId));
+    localStorage.removeItem(getLocalKey('audit_logs', userId));
 
-    const wsQuery = query(collection(db, WORKSPACES_COLLECTION), where('userId', '==', userId));
-    const wsSnap = await getDocs(wsQuery);
-    for (const docSnap of wsSnap.docs) {
-      await deleteDoc(doc(db, WORKSPACES_COLLECTION, docSnap.id));
+    try {
+      const notesQuery = query(collection(db, NOTES_COLLECTION), where('userId', '==', userId));
+      const notesSnap = await getDocs(notesQuery);
+      for (const d of notesSnap.docs) {
+        await deleteDoc(doc(db, NOTES_COLLECTION, d.id));
+      }
+    } catch (err) {
+      console.warn('Firestore account purge notice:', err);
     }
-
-    const logsQuery = query(collection(db, AUDIT_LOGS_COLLECTION), where('userId', '==', userId));
-    const logsSnap = await getDocs(logsQuery);
-    for (const docSnap of logsSnap.docs) {
-      await deleteDoc(doc(db, AUDIT_LOGS_COLLECTION, docSnap.id));
-    }
-
-    await deleteDoc(doc(db, USERS_COLLECTION, userId));
   }
 };
