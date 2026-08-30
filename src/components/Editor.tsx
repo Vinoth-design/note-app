@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Note, Block, BlockType } from '../types';
+import { firebaseConfig } from '../firebase';
 import EditorBlock from './EditorBlock';
 import EmojiPicker from './EmojiPicker';
 import CommandMenu from './CommandMenu';
@@ -699,21 +700,65 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
     
     setSummarizingIds(prev => ({ ...prev, [updateId]: true }));
     try {
-      const response = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ description: descriptionText }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to summarize description');
+      // 1. Attempt local server API route
+      let summaryResult = '';
+      try {
+        const response = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: descriptionText }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          summaryResult = data.summary || '';
+        }
+      } catch (err) {
+        console.warn('Backend /api/summarize not available, attempting direct client Gemini API:', err);
       }
-      
-      const data = await response.json();
-      if (data.summary) {
-        handleUpdateField(updateId, 'note', data.summary);
+
+      // 2. Direct client-side Gemini API call for static hosts (GitHub Pages)
+      if (!summaryResult) {
+        const apiKey = firebaseConfig.apiKey || import.meta.env.VITE_FIREBASE_API_KEY;
+        if (apiKey && apiKey !== "AIzaSy_demo_fallback_key") {
+          try {
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [
+                        {
+                          text: `Summarize the following description into an extremely concise, short single sentence or phrase (maximum 8-10 words). Keep it clear and minimal:\n\n${descriptionText}`,
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              }
+            );
+
+            if (geminiRes.ok) {
+              const gData = await geminiRes.json();
+              summaryResult = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+            }
+          } catch (gErr) {
+            console.warn('Direct Gemini API call notice:', gErr);
+          }
+        }
+      }
+
+      // 3. Fallback text summarization algorithm
+      if (!summaryResult) {
+        const cleaned = descriptionText.replace(/<[^>]*>/g, '').trim();
+        const words = cleaned.split(/\s+/).slice(0, 10).join(' ');
+        summaryResult = words ? (words.length < cleaned.length ? `${words}...` : words) : descriptionText;
+      }
+
+      if (summaryResult) {
+        handleUpdateField(updateId, 'note', summaryResult.replace(/^["']|["']$/g, ''));
       }
     } catch (error) {
       console.error('Error during AI summarization:', error);
