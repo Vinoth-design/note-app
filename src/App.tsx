@@ -175,12 +175,12 @@ export default function App() {
 
   // Filter notes belonging to the current active workspace
   const workspaceNotes = notes.filter((n) => {
+    if (!activeWorkspaceId) return true;
     if (n.workspaceId) {
       return n.workspaceId === activeWorkspaceId;
     }
-    // Backward compatibility: pre-existing notes belong to the default workspace
-    const firstWorkspaceId = workspaces[0]?.id;
-    return activeWorkspaceId === firstWorkspaceId;
+    const firstWorkspaceId = workspaces[0]?.id || 'default_main';
+    return activeWorkspaceId === firstWorkspaceId || activeWorkspaceId === 'default_main';
   });
 
   // Open the Create Task Modal with optional scheduled date
@@ -197,14 +197,20 @@ export default function App() {
   ) => {
     if (!user) return;
     try {
+      const targetWorkspaceId = activeWorkspaceId || workspaces[0]?.id || 'default_main';
+      if (!activeWorkspaceId) {
+        setActiveWorkspaceId(targetWorkspaceId);
+      }
       const targetDate = scheduledDate !== undefined ? scheduledDate : pendingScheduledDate;
       const newNote = await dbService.createNewNote(
         title,
         user.uid,
         targetDate,
-        activeWorkspaceId,
+        targetWorkspaceId,
         description
       );
+      // Optimistic instant state update
+      setNotes((prev) => [newNote, ...prev.filter(n => n.id !== newNote.id)]);
       setSelectedNoteId(newNote.id);
       setViewMode('editor');
       setPendingScheduledDate(null);
