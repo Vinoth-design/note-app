@@ -707,7 +707,7 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
       const effectiveKey = userGeminiKey || firebaseConfig.apiKey;
 
       if (effectiveKey && effectiveKey !== "AIzaSy_demo_fallback_key") {
-        const modelsToTry = ["gemini-2.5-flash", "gemini-1.5-flash"];
+        const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
         for (const model of modelsToTry) {
           try {
             const geminiRes = await fetch(

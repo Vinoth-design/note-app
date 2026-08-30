@@ -443,16 +443,16 @@ export default function Sidebar({
                     onSetViewMode('editor');
                     onSelectNote(note.id);
                   }}
-                  className={`group flex items-center justify-between px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                  className={`group flex items-center justify-between px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all ${
                     selectedNoteId === note.id && viewMode === 'editor'
-                      ? 'bg-[#EBEAE4] dark:bg-[#2C2C2A] text-[#37352F] dark:text-[#E3E3E2] font-semibold shadow-sm'
+                      ? 'bg-[#EBEAE4] dark:bg-[#2C2C2A] text-[#37352F] dark:text-[#E3E3E2] font-semibold shadow-xs'
                       : 'text-[#37352F]/80 dark:text-[#E3E3E2]/80 hover:bg-[#EBEAE4]/60 dark:hover:bg-[#2C2C2A]/40'
                   }`}
                 >
                   <div className="flex items-center gap-2 truncate pr-1 flex-1">
-                    <span className="flex-shrink-0 text-base">{note.emoji}</span>
+                    <span className="flex-shrink-0 text-sm">{note.emoji || '📝'}</span>
                     <div className="flex flex-col truncate min-w-0">
-                      <span className="truncate">{note.title || 'Untitled'}</span>
+                      <span className="truncate">{note.title || 'Untitled Task'}</span>
                       {note.tags && note.tags.length > 0 && (
                         <div className="flex flex-wrap gap-0.5 mt-0.5 max-w-full overflow-hidden">
                           {note.tags.map((t) => (
@@ -469,7 +469,48 @@ export default function Sidebar({
                       e.stopPropagation();
                       onDeleteNote(note.id);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-rose-100 hover:text-rose-600 rounded text-slate-400 dark:text-slate-500 transition-all cursor-pointer"
+                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-950/40 rounded text-slate-400 dark:text-slate-500 transition-all cursor-pointer"
+                    title="Delete task"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recent Tasks Section */}
+        {recentNotes.length > 0 && (
+          <div>
+            <div className="px-3 py-1 text-[10px] font-bold text-[#ACABA9] dark:text-[#888886] uppercase tracking-wider flex items-center gap-1.5">
+              <Clock size={10} className="text-[#2383E2]" />
+              Recent Tasks
+            </div>
+            <div className="mt-1 flex flex-col gap-0.5">
+              {recentNotes.map((note) => (
+                <div
+                  key={note.id}
+                  onClick={() => {
+                    onSetViewMode('editor');
+                    onSelectNote(note.id);
+                  }}
+                  className={`group flex items-center justify-between px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all ${
+                    selectedNoteId === note.id && viewMode === 'editor'
+                      ? 'bg-[#EBEAE4] dark:bg-[#2C2C2A] text-[#37352F] dark:text-[#E3E3E2] font-semibold shadow-xs'
+                      : 'text-[#37352F]/80 dark:text-[#E3E3E2]/80 hover:bg-[#EBEAE4]/60 dark:hover:bg-[#2C2C2A]/40'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate pr-1 flex-1">
+                    <span className="flex-shrink-0 text-sm">{note.emoji || '📝'}</span>
+                    <span className="truncate">{note.title || 'Untitled Task'}</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteNote(note.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-950/40 rounded text-slate-400 dark:text-slate-500 transition-all cursor-pointer"
                     title="Delete task"
                   >
                     <Trash2 size={12} />

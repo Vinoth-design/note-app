@@ -201,7 +201,7 @@ Return clean JSON matching the schema.`;
       let transcript = "";
       try {
         const transcribeResponse = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash",
           contents: { parts: [audioPart, { text: "Transcribe the spoken audio verbatim in the original language. Return only the transcribed text." }] },
         });
         transcript = transcribeResponse.text?.trim() || "";

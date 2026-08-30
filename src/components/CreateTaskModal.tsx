@@ -133,7 +133,7 @@ export default function CreateTaskModal({
       const effectiveKey = userGeminiKey || firebaseConfig.apiKey;
 
       if (effectiveKey && effectiveKey !== "AIzaSy_demo_fallback_key") {
-        const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
+        const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
         for (const model of models) {
           try {
             const prompt = `You are an AI task assistant. Extract structured task details from this text transcript:

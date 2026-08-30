@@ -412,20 +412,20 @@ export default function App() {
 
       {/* Main Workspace Frame */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Floating Dark Mode Switcher & Workspace Actions */}
-        <div className="absolute right-6 top-3 z-50 flex items-center gap-2">
+        {/* Glassmorphic Floating Header Actions */}
+        <div className="absolute right-6 top-3 z-50 flex items-center gap-1.5 glass-panel rounded-2xl p-1.5 shadow-md border border-[#EDECE9]/80 dark:border-[#2C2C2A]/80 hover-lift">
           {/* Daily Reminders Notification Popover */}
           <div className="relative">
             <button
               onClick={() => setIsRemindersOpen(!isRemindersOpen)}
-              className={`p-1.5 rounded-lg bg-white hover:bg-[#EBEAE4] dark:bg-[#1A1A18] dark:hover:bg-[#2C2C2A] text-[#ACABA9] hover:text-[#37352F] dark:hover:text-[#E3E3E2] shadow-sm border border-[#EDECE9] dark:border-[#2C2C2A] cursor-pointer transition-all flex items-center justify-center relative ${
+              className={`p-1.5 rounded-xl bg-white/80 hover:bg-[#EBEAE4] dark:bg-[#20201E]/80 dark:hover:bg-[#2C2C2A] text-[#ACABA9] hover:text-[#37352F] dark:hover:text-[#E3E3E2] border border-[#EDECE9] dark:border-[#2C2C2A] cursor-pointer transition-all flex items-center justify-center relative ${
                 isRemindersOpen ? 'text-[#2383E2] border-[#2383E2]/40 dark:border-[#2383E2]/40' : ''
               }`}
               title="Daily Reminders"
             >
-              <Bell size={15} className={activeReminders.length > 0 ? 'text-rose-500' : ''} />
+              <Bell size={15} className={activeReminders.length > 0 ? 'text-rose-500 animate-bounce' : ''} />
               {activeReminders.length > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[8px] font-bold text-white ring-2 ring-white dark:ring-[#121211]">
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[8px] font-extrabold text-white ring-2 ring-white dark:ring-[#121211]">
                   {activeReminders.length}
                 </span>
               )}
@@ -435,7 +435,7 @@ export default function App() {
             {isRemindersOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setIsRemindersOpen(false)} />
-                <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-[#1C1C1A] border border-[#EDECE9] dark:border-[#2C2C2A] rounded-2xl shadow-xl z-50 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-[#1C1C1A] border border-[#EDECE9] dark:border-[#2C2C2A] rounded-2xl shadow-2xl z-50 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
                   <div className="flex items-center justify-between border-b border-[#EDECE9]/60 dark:border-[#2C2C2A]/60 pb-2 mb-3">
                     <span className="text-xs font-extrabold text-[#37352F] dark:text-white flex items-center gap-1.5">
                       <Clock size={13} className="text-rose-500" />
@@ -446,7 +446,7 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto scrollbar-thin">
                     {activeReminders.length === 0 ? (
                       <div className="py-6 text-center text-xs text-[#ACABA9] dark:text-slate-600 font-medium italic">
                         All clear! No reminders set.
@@ -459,7 +459,7 @@ export default function App() {
                           className="p-2 rounded-xl border border-slate-50 dark:border-slate-800/40 hover:border-slate-200/60 dark:hover:border-slate-700/60 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 cursor-pointer transition-all flex items-start justify-between gap-2 group text-left"
                         >
                           <div className="flex items-start gap-2 min-w-0">
-                            <span className="text-sm mt-0.5">{note.emoji}</span>
+                            <span className="text-sm mt-0.5">{note.emoji || '📝'}</span>
                             <div className="min-w-0">
                               <p className="text-xs font-bold text-[#37352F] dark:text-white truncate">
                                 {note.title || 'Untitled Task'}
@@ -490,10 +490,10 @@ export default function App() {
           {/* Dark / Light Toggle */}
           <button
             onClick={() => setIsDarkMode(!isDarkMode)}
-            className="p-1.5 rounded-lg bg-white hover:bg-[#EBEAE4] dark:bg-[#1A1A18] dark:hover:bg-[#2C2C2A] text-[#ACABA9] hover:text-[#37352F] dark:hover:text-[#E3E3E2] shadow-sm border border-[#EDECE9] dark:border-[#2C2C2A] cursor-pointer transition-all flex items-center justify-center"
+            className="p-1.5 rounded-xl bg-white/80 hover:bg-[#EBEAE4] dark:bg-[#20201E]/80 dark:hover:bg-[#2C2C2A] text-[#ACABA9] hover:text-[#37352F] dark:hover:text-[#E3E3E2] border border-[#EDECE9] dark:border-[#2C2C2A] cursor-pointer transition-all flex items-center justify-center"
             title={isDarkMode ? 'Light Mode' : 'Dark Mode'}
           >
-            {isDarkMode ? <Sun size={15} /> : <Moon size={15} />}
+            {isDarkMode ? <Sun size={15} className="text-amber-400" /> : <Moon size={15} className="text-indigo-500" />}
           </button>
         </div>
 
