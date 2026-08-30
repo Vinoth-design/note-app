@@ -75,17 +75,6 @@ export default function App() {
         }
         setUser(userProfile);
       } else {
-        const demoUserJson = localStorage.getItem('nestnote_demo_user');
-        if (demoUserJson) {
-          try {
-            const demoUser = JSON.parse(demoUserJson);
-            setUser(demoUser);
-            setIsAuthChecking(false);
-            return;
-          } catch (e) {
-            localStorage.removeItem('nestnote_demo_user');
-          }
-        }
         setUser(null);
         setNotes([]);
         setWorkspaces([]);
