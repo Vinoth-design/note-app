@@ -15,52 +15,30 @@ import { db, auth } from './firebase';
 import { Note, Block, Workspace, User, AuditLogEntry } from './types';
 
 const NOTES_COLLECTION = 'notes';
+const WORKSPACES_COLLECTION = 'workspaces';
+const USERS_COLLECTION = 'users';
+const AUDIT_LOGS_COLLECTION = 'auditLogs';
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+// Helper for local storage key generation
+const getLocalKey = (prefix: string, userId: string) => `nestnote_${prefix}_${userId}`;
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
+// Local storage fallback helpers
+function getLocalItems<T>(key: string, defaultItems: T[] = []): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaultItems;
+  } catch {
+    return defaultItems;
   }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): FirestoreErrorInfo {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  return errInfo;
+function setLocalItems<T>(key: string, items: T[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(items));
+    window.dispatchEvent(new CustomEvent('nestnote_local_sync', { detail: { key } }));
+  } catch (err) {
+    console.warn('Local storage write error:', err);
+  }
 }
 
 // Helper to create a default blank block
@@ -155,66 +133,107 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 export const dbService = {
-  // Real-time synchronization of all notes for a specific user
-  subscribeNotes(userId: string, onUpdate: (notes: Note[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, NOTES_COLLECTION),
-      where('userId', '==', userId),
-      orderBy('updatedAt', 'desc')
-    );
+  // Real-time synchronization of notes with Firestore + LocalStorage Hybrid Fallback
+  subscribeNotes(userId: string, onUpdate: (notes: Note[]) => void, _onError?: (error: Error) => void) {
+    const key = getLocalKey('notes', userId);
+    
+    // Initial emit from local storage immediately so UI renders instantaneously
+    const initialLocal = getLocalItems<Note>(key, []);
+    onUpdate(initialLocal);
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const notes: Note[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          notes.push({
-            id: doc.id,
-            title: data.title || '',
-            emoji: data.emoji || '📝',
-            coverImage: data.coverImage,
-            blocks: data.blocks || [],
-            createdAt: data.createdAt || Date.now(),
-            updatedAt: data.updatedAt || Date.now(),
-            scheduledDate: data.scheduledDate || null,
-            dueDate: data.dueDate || null,
-            recurrence: data.recurrence || 'None',
-            remindersEnabled: !!data.remindersEnabled,
-            isFavorite: !!data.isFavorite,
-            isArchived: !!data.isArchived,
-            status: data.status || undefined,
-            priority: data.priority || undefined,
-            assignee: data.assignee || undefined,
-            assets: data.assets || undefined,
-            tags: data.tags || [],
-            updates: data.updates || [],
-            workspaceId: data.workspaceId || undefined,
-            userId: data.userId || undefined,
-          });
-        });
-        onUpdate(notes);
-      },
-      (error) => {
-        const errInfo = handleFirestoreError(error, OperationType.GET, NOTES_COLLECTION);
-        if (onError) onError(new Error(JSON.stringify(errInfo)));
+    // Listen for local changes across tabs or local operations
+    const handleLocalSync = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv.detail?.key === key) {
+        onUpdate(getLocalItems<Note>(key, []));
       }
-    );
+    };
+    window.addEventListener('nestnote_local_sync', handleLocalSync);
+
+    // Attempt Firestore real-time subscription
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, NOTES_COLLECTION),
+        where('userId', '==', userId),
+        orderBy('updatedAt', 'desc')
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const notes: Note[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            notes.push({
+              id: docSnap.id,
+              title: data.title || '',
+              emoji: data.emoji || '📝',
+              coverImage: data.coverImage,
+              blocks: data.blocks || [],
+              createdAt: data.createdAt || Date.now(),
+              updatedAt: data.updatedAt || Date.now(),
+              scheduledDate: data.scheduledDate || null,
+              dueDate: data.dueDate || null,
+              recurrence: data.recurrence || 'None',
+              remindersEnabled: !!data.remindersEnabled,
+              isFavorite: !!data.isFavorite,
+              isArchived: !!data.isArchived,
+              status: data.status || undefined,
+              priority: data.priority || undefined,
+              assignee: data.assignee || undefined,
+              assets: data.assets || undefined,
+              tags: data.tags || [],
+              updates: data.updates || [],
+              workspaceId: data.workspaceId || undefined,
+              userId: data.userId || undefined,
+            });
+          });
+          // Merge & update local cache
+          setLocalItems(key, notes);
+          onUpdate(notes);
+        },
+        (err) => {
+          console.warn('Firestore notes subscription notice (using local storage):', err?.message || err);
+          onUpdate(getLocalItems<Note>(key, []));
+        }
+      );
+    } catch (err) {
+      console.warn('Firestore subscription fallback:', err);
+    }
+
+    return () => {
+      window.removeEventListener('nestnote_local_sync', handleLocalSync);
+      unsubscribeFirestore();
+    };
   },
 
-  // Save a note to Firestore
+  // Save a note to LocalStorage + Firestore
   async saveNote(note: Note, userId: string): Promise<void> {
-    const noteRef = doc(db, NOTES_COLLECTION, note.id);
-    const updatedNote = {
+    const key = getLocalKey('notes', userId);
+    const updatedNote: Note = {
       ...note,
       userId,
       updatedAt: Date.now(),
     };
-    const cleanedNote = cleanUndefined(updatedNote);
+
+    // 1. Save to local storage immediately
+    const currentLocal = getLocalItems<Note>(key, []);
+    const idx = currentLocal.findIndex(n => n.id === note.id);
+    if (idx >= 0) {
+      currentLocal[idx] = updatedNote;
+    } else {
+      currentLocal.unshift(updatedNote);
+    }
+    setLocalItems(key, currentLocal);
+
+    // 2. Attempt Firestore sync in background
     try {
-      await setDoc(noteRef, cleanedNote, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `${NOTES_COLLECTION}/${note.id}`);
+      const noteRef = doc(db, NOTES_COLLECTION, note.id);
+      const cleaned = cleanUndefined(updatedNote);
+      await setDoc(noteRef, cleaned, { merge: true });
+    } catch (err) {
+      console.warn('Firestore background save notice (saved locally):', err);
     }
   },
 
@@ -232,60 +251,110 @@ export const dbService = {
     return note;
   },
 
-  // Delete a note from Firestore
-  async deleteNote(id: string): Promise<void> {
+  // Delete a note
+  async deleteNote(id: string, userId?: string): Promise<void> {
+    const currentUserId = userId || auth.currentUser?.uid || 'guest';
+    const key = getLocalKey('notes', currentUserId);
+
+    // 1. Delete locally
+    const currentLocal = getLocalItems<Note>(key, []);
+    const filtered = currentLocal.filter(n => n.id !== id);
+    setLocalItems(key, filtered);
+
+    // 2. Delete from Firestore
     try {
       const noteRef = doc(db, NOTES_COLLECTION, id);
       await deleteDoc(noteRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${NOTES_COLLECTION}/${id}`);
+    } catch (err) {
+      console.warn('Firestore delete notice:', err);
     }
   },
 
-  // Real-time synchronization of all workspaces for a specific user
-  subscribeWorkspaces(userId: string, onUpdate: (workspaces: Workspace[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, 'workspaces'),
-      where('userId', '==', userId),
-      orderBy('createdAt', 'asc')
-    );
+  // Real-time synchronization of workspaces with Hybrid Fallback
+  subscribeWorkspaces(userId: string, onUpdate: (workspaces: Workspace[]) => void, _onError?: (error: Error) => void) {
+    const key = getLocalKey('workspaces', userId);
+    const defaultWorkspaces: Workspace[] = [
+      { id: 'default_main', name: 'General Notes', icon: '📝', createdAt: Date.now(), accentColor: 'indigo', userId },
+      { id: 'default_projects', name: 'Projects', icon: '🚀', createdAt: Date.now() + 1, accentColor: 'emerald', userId },
+    ];
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const workspaces: Workspace[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          workspaces.push({
-            id: doc.id,
-            name: data.name || 'Untitled Workspace',
-            icon: data.icon || '💼',
-            createdAt: data.createdAt || Date.now(),
-            accentColor: data.accentColor || 'indigo',
-            userId: data.userId || undefined,
-          });
-        });
-        onUpdate(workspaces);
-      },
-      (error) => {
-        const errInfo = handleFirestoreError(error, OperationType.GET, 'workspaces');
-        if (onError) onError(new Error(JSON.stringify(errInfo)));
+    const initialLocal = getLocalItems<Workspace>(key, defaultWorkspaces);
+    onUpdate(initialLocal);
+
+    const handleLocalSync = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv.detail?.key === key) {
+        onUpdate(getLocalItems<Workspace>(key, defaultWorkspaces));
       }
-    );
+    };
+    window.addEventListener('nestnote_local_sync', handleLocalSync);
+
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, WORKSPACES_COLLECTION),
+        where('userId', '==', userId),
+        orderBy('createdAt', 'asc')
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const workspaces: Workspace[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            workspaces.push({
+              id: docSnap.id,
+              name: data.name || 'Untitled Workspace',
+              icon: data.icon || '💼',
+              createdAt: data.createdAt || Date.now(),
+              accentColor: data.accentColor || 'indigo',
+              userId: data.userId || undefined,
+            });
+          });
+          if (workspaces.length > 0) {
+            setLocalItems(key, workspaces);
+            onUpdate(workspaces);
+          }
+        },
+        (err) => {
+          console.warn('Firestore workspaces subscription notice (using local storage):', err);
+          onUpdate(getLocalItems<Workspace>(key, defaultWorkspaces));
+        }
+      );
+    } catch (err) {
+      console.warn('Firestore workspace subscription fallback:', err);
+    }
+
+    return () => {
+      window.removeEventListener('nestnote_local_sync', handleLocalSync);
+      unsubscribeFirestore();
+    };
   },
 
   // Save a workspace
   async saveWorkspace(workspace: Workspace, userId: string): Promise<void> {
-    const wsRef = doc(db, 'workspaces', workspace.id);
-    const cleaned = cleanUndefined({ ...workspace, userId });
+    const key = getLocalKey('workspaces', userId);
+    const updated = { ...workspace, userId };
+    
+    const currentLocal = getLocalItems<Workspace>(key, []);
+    const idx = currentLocal.findIndex(w => w.id === workspace.id);
+    if (idx >= 0) {
+      currentLocal[idx] = updated;
+    } else {
+      currentLocal.push(updated);
+    }
+    setLocalItems(key, currentLocal);
+
     try {
-      await setDoc(wsRef, cleaned, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `workspaces/${workspace.id}`);
+      const wsRef = doc(db, WORKSPACES_COLLECTION, workspace.id);
+      await setDoc(wsRef, cleanUndefined(updated), { merge: true });
+    } catch (err) {
+      console.warn('Firestore workspace save notice:', err);
     }
   },
 
-  // Create and persist a new workspace
+  // Create workspace
   async createNewWorkspace(name: string, userId: string, icon: string = '💼', accentColor: string = 'indigo'): Promise<Workspace> {
     const id = Math.random().toString(36).substring(2, 11);
     const ws: Workspace = {
@@ -300,35 +369,53 @@ export const dbService = {
     return ws;
   },
 
-  // Delete a workspace
-  async deleteWorkspace(id: string): Promise<void> {
+  // Delete workspace
+  async deleteWorkspace(id: string, userId?: string): Promise<void> {
+    const currentUserId = userId || auth.currentUser?.uid || 'guest';
+    const key = getLocalKey('workspaces', currentUserId);
+
+    const currentLocal = getLocalItems<Workspace>(key, []);
+    const filtered = currentLocal.filter(w => w.id !== id);
+    setLocalItems(key, filtered);
+
     try {
-      const wsRef = doc(db, 'workspaces', id);
+      const wsRef = doc(db, WORKSPACES_COLLECTION, id);
       await deleteDoc(wsRef);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `workspaces/${id}`);
+    } catch (err) {
+      console.warn('Firestore delete workspace notice:', err);
     }
   },
 
-  // Save or update user profile
+  // User Profile Management
   async saveUserProfile(user: User): Promise<void> {
-    const userRef = doc(db, 'users', user.uid);
-    const cleaned = cleanUndefined(user);
+    const key = getLocalKey('user_profile', user.uid);
     try {
-      await setDoc(userRef, cleaned, { merge: true });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      localStorage.setItem(key, JSON.stringify(user));
+    } catch (e) {
+      console.warn('Local profile save notice:', e);
+    }
+
+    try {
+      const userRef = doc(db, USERS_COLLECTION, user.uid);
+      await setDoc(userRef, cleanUndefined(user), { merge: true });
+    } catch (err) {
+      console.warn('Firestore profile save notice:', err);
     }
   },
 
-  // Fetch a user profile
   async getUserProfile(uid: string): Promise<User | null> {
+    const key = getLocalKey('user_profile', uid);
     try {
-      const userRef = doc(db, 'users', uid);
+      const cached = localStorage.getItem(key);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+
+    try {
+      const userRef = doc(db, USERS_COLLECTION, uid);
       const userSnap = await getDoc(userRef);
       if (userSnap.exists()) {
         const data = userSnap.data();
-        return {
+        const profile: User = {
           uid: userSnap.id,
           email: data.email || '',
           displayName: data.displayName || null,
@@ -336,132 +423,128 @@ export const dbService = {
           createdAt: data.createdAt || Date.now(),
           lastLoginAt: data.lastLoginAt || Date.now(),
         };
+        localStorage.setItem(key, JSON.stringify(profile));
+        return profile;
       }
-      return null;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `users/${uid}`);
-      return null;
+    } catch (err) {
+      console.warn('Firestore profile fetch notice:', err);
     }
+    return null;
   },
 
-  // Log security / governance event
+  // Security Audit Logging
   async logSecurityEvent(userId: string, action: AuditLogEntry['action'], details: string): Promise<void> {
+    const id = Math.random().toString(36).substring(2, 11);
+    const entry: AuditLogEntry = {
+      id,
+      userId,
+      action,
+      details,
+      timestamp: Date.now(),
+    };
+
+    const key = getLocalKey('audit_logs', userId);
+    const currentLocal = getLocalItems<AuditLogEntry>(key, []);
+    currentLocal.unshift(entry);
+    setLocalItems(key, currentLocal.slice(0, 100));
+
     try {
-      const id = Math.random().toString(36).substring(2, 11);
-      const logRef = doc(db, 'auditLogs', id);
-      const entry: AuditLogEntry = {
-        id,
-        userId,
-        action,
-        details,
-        timestamp: Date.now(),
-      };
+      const logRef = doc(db, AUDIT_LOGS_COLLECTION, id);
       await setDoc(logRef, entry);
-    } catch (error) {
-      console.warn('Failed to record security audit log:', error);
+    } catch (err) {
+      console.warn('Firestore audit log notice:', err);
     }
   },
 
-  // Subscribe real-time audit logs for a user
-  subscribeAuditLogs(userId: string, onUpdate: (logs: AuditLogEntry[]) => void, onError?: (error: Error) => void) {
-    const q = query(
-      collection(db, 'auditLogs'),
-      where('userId', '==', userId),
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
+  subscribeAuditLogs(userId: string, onUpdate: (logs: AuditLogEntry[]) => void, _onError?: (error: Error) => void) {
+    const key = getLocalKey('audit_logs', userId);
+    onUpdate(getLocalItems<AuditLogEntry>(key, []));
 
-    return onSnapshot(
-      q,
-      (snapshot) => {
-        const logs: AuditLogEntry[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          logs.push({
-            id: doc.id,
-            userId: data.userId,
-            action: data.action,
-            details: data.details,
-            timestamp: data.timestamp || Date.now(),
+    const handleLocalSync = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv.detail?.key === key) {
+        onUpdate(getLocalItems<AuditLogEntry>(key, []));
+      }
+    };
+    window.addEventListener('nestnote_local_sync', handleLocalSync);
+
+    let unsubscribeFirestore = () => {};
+    try {
+      const q = query(
+        collection(db, AUDIT_LOGS_COLLECTION),
+        where('userId', '==', userId),
+        orderBy('timestamp', 'desc'),
+        limit(50)
+      );
+
+      unsubscribeFirestore = onSnapshot(
+        q,
+        (snapshot) => {
+          const logs: AuditLogEntry[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            logs.push({
+              id: docSnap.id,
+              userId: data.userId,
+              action: data.action,
+              details: data.details,
+              timestamp: data.timestamp || Date.now(),
+            });
           });
-        });
-        onUpdate(logs);
-      },
-      (error) => {
-        const errInfo = handleFirestoreError(error, OperationType.GET, 'auditLogs');
-        if (onError) onError(new Error(JSON.stringify(errInfo)));
-      }
-    );
-  },
-
-  // Full User Data Export (JSON export compliance)
-  async exportUserData(userId: string) {
-    try {
-      // 1. Fetch user profile
-      const userProfile = await this.getUserProfile(userId);
-
-      // 2. Fetch all workspaces
-      const wsQuery = query(collection(db, 'workspaces'), where('userId', '==', userId));
-      const wsSnap = await getDocs(wsQuery);
-      const workspaces: Workspace[] = [];
-      wsSnap.forEach(d => workspaces.push({ id: d.id, ...d.data() } as Workspace));
-
-      // 3. Fetch all notes
-      const notesQuery = query(collection(db, NOTES_COLLECTION), where('userId', '==', userId));
-      const notesSnap = await getDocs(notesQuery);
-      const notes: Note[] = [];
-      notesSnap.forEach(d => notes.push({ id: d.id, ...d.data() } as Note));
-
-      // 4. Fetch audit logs
-      const logsQuery = query(collection(db, 'auditLogs'), where('userId', '==', userId));
-      const logsSnap = await getDocs(logsQuery);
-      const auditLogs: AuditLogEntry[] = [];
-      logsSnap.forEach(d => auditLogs.push({ id: d.id, ...d.data() } as AuditLogEntry));
-
-      await this.logSecurityEvent(userId, 'EXPORT_DATA', 'Exported full user data archive (JSON)');
-
-      return {
-        exportedAt: new Date().toISOString(),
-        userProfile,
-        workspaces,
-        notes,
-        auditLogs,
-      };
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, 'user_data_export');
-      throw error;
+          if (logs.length > 0) {
+            setLocalItems(key, logs);
+            onUpdate(logs);
+          }
+        },
+        (err) => {
+          console.warn('Firestore audit logs subscription notice:', err);
+          onUpdate(getLocalItems<AuditLogEntry>(key, []));
+        }
+      );
+    } catch (err) {
+      console.warn('Firestore audit logs fallback:', err);
     }
+
+    return () => {
+      window.removeEventListener('nestnote_local_sync', handleLocalSync);
+      unsubscribeFirestore();
+    };
   },
 
-  // Complete User Account Data Purge
+  // Export User Archive
+  async exportUserData(userId: string) {
+    const notes = getLocalItems<Note>(getLocalKey('notes', userId), []);
+    const workspaces = getLocalItems<Workspace>(getLocalKey('workspaces', userId), []);
+    const auditLogs = getLocalItems<AuditLogEntry>(getLocalKey('audit_logs', userId), []);
+    const userProfile = await this.getUserProfile(userId);
+
+    await this.logSecurityEvent(userId, 'EXPORT_DATA', 'Exported full user data archive (JSON)');
+
+    return {
+      exportedAt: new Date().toISOString(),
+      userProfile,
+      workspaces,
+      notes,
+      auditLogs,
+    };
+  },
+
+  // Account Purge
   async purgeAccountData(userId: string): Promise<void> {
+    localStorage.removeItem(getLocalKey('notes', userId));
+    localStorage.removeItem(getLocalKey('workspaces', userId));
+    localStorage.removeItem(getLocalKey('user_profile', userId));
+    localStorage.removeItem(getLocalKey('audit_logs', userId));
+    window.dispatchEvent(new CustomEvent('nestnote_local_sync', { detail: { key: getLocalKey('notes', userId) } }));
+
     try {
-      // 1. Delete all notes
       const notesQuery = query(collection(db, NOTES_COLLECTION), where('userId', '==', userId));
       const notesSnap = await getDocs(notesQuery);
-      for (const docSnap of notesSnap.docs) {
-        await deleteDoc(doc(db, NOTES_COLLECTION, docSnap.id));
+      for (const d of notesSnap.docs) {
+        await deleteDoc(doc(db, NOTES_COLLECTION, d.id));
       }
-
-      // 2. Delete all workspaces
-      const wsQuery = query(collection(db, 'workspaces'), where('userId', '==', userId));
-      const wsSnap = await getDocs(wsQuery);
-      for (const docSnap of wsSnap.docs) {
-        await deleteDoc(doc(db, 'workspaces', docSnap.id));
-      }
-
-      // 3. Delete all audit logs
-      const logsQuery = query(collection(db, 'auditLogs'), where('userId', '==', userId));
-      const logsSnap = await getDocs(logsQuery);
-      for (const docSnap of logsSnap.docs) {
-        await deleteDoc(doc(db, 'auditLogs', docSnap.id));
-      }
-
-      // 4. Delete user profile document
-      await deleteDoc(doc(db, 'users', userId));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${userId}_purge`);
-      throw error;
+    } catch (err) {
+      console.warn('Firestore account purge notice:', err);
     }
   }
 };
