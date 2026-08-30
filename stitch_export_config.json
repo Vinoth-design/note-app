@@ -1,0 +1,18 @@
+{
+  "project": {
+    "name": "MultiPage_App_Export",
+    "source": "antigravity",
+    "target": "stitch",
+    "exportScope": "all_pages"
+  },
+  "mcpServer": {
+    "endpoint": "https://stitch.withgoogle.com/mcp",
+    "authType": "apiKey"
+  },
+  "parser": {
+    "includeRoutes": true,
+    "extractGlobalStyles": true,
+    "componentDiscovery": "deep",
+    "outputFormat": "designMD"
+  }
+}

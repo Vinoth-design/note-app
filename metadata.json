@@ -1,0 +1,6 @@
+{
+  "name": "NestNote - Note tracking app",
+  "description": "A task-centric workspace featuring an interactive task planner, a calendar, status metrics, voice task creation, and a block-based note editor nested under each task.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

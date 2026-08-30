@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "Note": {
+      "title": "Note",
+      "description": "Represents a task-centric note with dynamic blocks and progress tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "emoji": { "type": "string" },
+        "coverImage": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "scheduledDate": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "recurrence": { "type": "string", "enum": ["None", "Daily", "Weekly", "Monthly"] },
+        "remindersEnabled": { "type": "boolean" },
+        "isFavorite": { "type": "boolean" },
+        "isArchived": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Not Started", "In Progress", "Completed"] },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High"] },
+        "assignee": { "type": "string" },
+        "tags": { "type": "array" },
+        "workspaceId": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "emoji", "createdAt", "updatedAt", "userId"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "A workspace container to group and organize related notes/tasks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "accentColor": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "createdAt", "userId"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Represents an authenticated user profile securely mapped from Google SSO.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "lastLoginAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Security and data lifecycle event audit logs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "userId", "action", "details", "timestamp"]
+    }
+  },
+  "firestore": {
+    "users": {
+      "schema": "User",
+      "description": "Collection of user profiles for session tracking and SSO mapping"
+    },
+    "notes": {
+      "schema": "Note",
+      "description": "Collection of tasks and notes"
+    },
+    "workspaces": {
+      "schema": "Workspace",
+      "description": "Collection of workspaces for multi-workspace support"
+    },
+    "auditLogs": {
+      "schema": "AuditLog",
+      "description": "Security and governance event audit logs"
+    }
+  }
+}
