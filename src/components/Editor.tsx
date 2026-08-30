@@ -736,6 +736,8 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
                 summaryResult = extracted;
                 break;
               }
+            } else {
+              console.warn(`Gemini API model ${model} HTTP ${geminiRes.status}. If 403 Forbidden, get a free Gemini API Key from https://aistudio.google.com/app/apikey and paste it under Settings -> Preferences.`);
             }
           } catch (gErr) {
             console.warn(`Gemini API model ${model} notice:`, gErr);
