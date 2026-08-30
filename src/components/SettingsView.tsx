@@ -201,6 +201,17 @@ export default function SettingsView({
   const [sidebarTaskCount, setSidebarTaskCount] = useState(() => {
     return localStorage.getItem('pref_sidebar_task_count') !== 'false';
   });
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState(() => {
+    return localStorage.getItem('nestnote_gemini_api_key') || '';
+  });
+  const [geminiSavedNotice, setGeminiSavedNotice] = useState(false);
+
+  const handleSaveGeminiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem('nestnote_gemini_api_key', geminiApiKeyInput.trim());
+    setGeminiSavedNotice(true);
+    setTimeout(() => setGeminiSavedNotice(false), 3000);
+  };
 
   const handleToggleProjection = () => {
     const nextVal = !projectionEnabled;
@@ -652,6 +663,45 @@ export default function SettingsView({
                     ))}
                   </div>
                 </div>
+              </div>
+              {/* Feature 4: Gemini AI Integration Key */}
+              <div className="p-6 space-y-4">
+                <form onSubmit={handleSaveGeminiKey} className="space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <h3 className="text-xs font-extrabold text-[#37352F] dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-rose-500" /> Custom Gemini AI API Key (Optional)
+                      </h3>
+                      <p className="text-[11px] text-[#ACABA9] font-medium max-w-lg">
+                        Provide your personal Google AI Studio Gemini API Key for unlimited AI summaries and task parsing. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-indigo-500 underline font-bold">aistudio.google.com</a>.
+                      </p>
+                    </div>
+                    {geminiSavedNotice && (
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-300">
+                        Saved!
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="password"
+                        value={geminiApiKeyInput}
+                        onChange={(e) => setGeminiApiKeyInput(e.target.value)}
+                        placeholder="AIzaSy..."
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-[#252523] border border-[#EDECE9] dark:border-[#2C2C2A] rounded-xl text-xs font-mono text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+                    >
+                      Save Key
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
 

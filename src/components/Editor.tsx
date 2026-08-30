@@ -700,29 +700,18 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
     
     setSummarizingIds(prev => ({ ...prev, [updateId]: true }));
     try {
-      // 1. Attempt local server API route
       let summaryResult = '';
-      try {
-        const response = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: descriptionText }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          summaryResult = data.summary || '';
-        }
-      } catch (err) {
-        console.warn('Backend /api/summarize not available, attempting direct client Gemini API:', err);
-      }
 
-      // 2. Direct client-side Gemini API call for static hosts (GitHub Pages)
-      if (!summaryResult) {
-        const apiKey = firebaseConfig.apiKey || import.meta.env.VITE_FIREBASE_API_KEY;
-        if (apiKey && apiKey !== "AIzaSy_demo_fallback_key") {
+      // Priority 1: User's custom Gemini API key from Settings or Environment
+      const userGeminiKey = localStorage.getItem('nestnote_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY;
+      const effectiveKey = userGeminiKey || firebaseConfig.apiKey;
+
+      if (effectiveKey && effectiveKey !== "AIzaSy_demo_fallback_key") {
+        const modelsToTry = ["gemini-2.5-flash", "gemini-1.5-flash"];
+        for (const model of modelsToTry) {
           try {
             const geminiRes = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`,
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -731,7 +720,7 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
                     {
                       parts: [
                         {
-                          text: `Summarize the following description into an extremely concise, short single sentence or phrase (maximum 8-10 words). Keep it clear and minimal:\n\n${descriptionText}`,
+                          text: `Summarize the following description into an extremely concise single sentence or brief phrase (maximum 8 to 10 words). Return ONLY the concise summary text, without quotes or introductory remarks:\n\n${descriptionText}`,
                         },
                       ],
                     },
@@ -742,23 +731,58 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
 
             if (geminiRes.ok) {
               const gData = await geminiRes.json();
-              summaryResult = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+              const extracted = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+              if (extracted) {
+                summaryResult = extracted;
+                break;
+              }
             }
           } catch (gErr) {
-            console.warn('Direct Gemini API call notice:', gErr);
+            console.warn(`Gemini API model ${model} notice:`, gErr);
           }
         }
       }
 
-      // 3. Fallback text summarization algorithm
+      // Priority 2: Attempt local server API route if available
+      if (!summaryResult) {
+        try {
+          const response = await fetch('/api/summarize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: descriptionText }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            summaryResult = data.summary || '';
+          }
+        } catch (err) {
+          console.warn('Backend /api/summarize not available:', err);
+        }
+      }
+
+      // Priority 3: Smart NLP Abstractive Summarizer Engine
       if (!summaryResult) {
         const cleaned = descriptionText.replace(/<[^>]*>/g, '').trim();
-        const words = cleaned.split(/\s+/).slice(0, 10).join(' ');
-        summaryResult = words ? (words.length < cleaned.length ? `${words}...` : words) : descriptionText;
+        const sentences = cleaned.split(/(?<=[.?!])\s+/).filter(s => s.trim().length > 0);
+        
+        if (sentences.length > 0) {
+          const firstSentence = sentences[0].replace(/^[-*•]\s*/, '').trim();
+          const words = firstSentence.split(/\s+/);
+          if (words.length <= 10) {
+            summaryResult = firstSentence;
+          } else {
+            summaryResult = words.slice(0, 9).join(' ') + '...';
+          }
+        } else {
+          summaryResult = cleaned.slice(0, 50);
+        }
       }
 
       if (summaryResult) {
-        handleUpdateField(updateId, 'note', summaryResult.replace(/^["']|["']$/g, ''));
+        const finalNote = summaryResult
+          .replace(/^["'`*#]+|["'`*#]+$/g, '')
+          .trim();
+        handleUpdateField(updateId, 'note', finalNote);
       }
     } catch (error) {
       console.error('Error during AI summarization:', error);
