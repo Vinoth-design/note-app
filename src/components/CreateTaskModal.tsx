@@ -11,6 +11,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import DatePicker from './DatePicker';
+import { firebaseConfig } from '../firebase';
 
 interface CreateTaskModalProps {
   isOpen: boolean;
@@ -125,41 +126,93 @@ export default function CreateTaskModal({
     setStatusMessage('Analyzing speech with Gemini AI...');
 
     try {
-      const response = await fetch('/api/voice-task/analyze-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript: transcriptText.trim(),
-          currentDate: new Date().toISOString().split('T')[0],
-          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-        }),
-      });
+      let extractedData: { title?: string; description?: string; scheduledDate?: string | null } | null = null;
 
-      if (!response.ok) {
-        throw new Error('Failed to analyze voice input');
+      // 1. Direct client-side Gemini API call for static hosts (GitHub Pages)
+      const userGeminiKey = localStorage.getItem('nestnote_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY;
+      const effectiveKey = userGeminiKey || firebaseConfig.apiKey;
+
+      if (effectiveKey && effectiveKey !== "AIzaSy_demo_fallback_key") {
+        const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
+        for (const model of models) {
+          try {
+            const prompt = `You are an AI task assistant. Extract structured task details from this text transcript:
+1. "title": Crisp task summary (max 6-8 words)
+2. "description": Detailed task notes and context
+3. "scheduledDate": ISO YYYY-MM-DD date string if a date was mentioned (today is ${new Date().toISOString().split('T')[0]}), otherwise null
+
+Respond ONLY with valid JSON object in format: {"title": "...", "description": "...", "scheduledDate": null}
+
+Input text: "${transcriptText.trim()}"`;
+
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }],
+                }),
+              }
+            );
+
+            if (geminiRes.ok) {
+              const gData = await geminiRes.json();
+              const rawText = gData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+              const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                extractedData = JSON.parse(jsonMatch[0]);
+                break;
+              }
+            }
+          } catch (gErr) {
+            console.warn(`Gemini API model ${model} notice:`, gErr);
+          }
+        }
       }
 
-      const data = await response.json();
-      if (data.title) {
-        setTitle(data.title);
+      // 2. Attempt local backend route if direct client call returned nothing
+      if (!extractedData) {
+        try {
+          const response = await fetch('/api/voice-task/analyze-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transcript: transcriptText.trim(),
+              currentDate: new Date().toISOString().split('T')[0],
+              timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            }),
+          });
+          if (response.ok) {
+            extractedData = await response.json();
+          }
+        } catch (err) {
+          console.warn('Backend route not available:', err);
+        }
       }
-      if (data.description !== undefined && data.description !== null) {
-        setDescription(data.description);
-      }
-      if (data.scheduledDate) {
-        setScheduledDate(data.scheduledDate);
+
+      // Apply extracted data
+      if (extractedData) {
+        if (extractedData.title) setTitle(extractedData.title);
+        if (extractedData.description !== undefined && extractedData.description !== null) {
+          setDescription(extractedData.description);
+        }
+        if (extractedData.scheduledDate) setScheduledDate(extractedData.scheduledDate);
+      } else {
+        // NLP Smart Fallback
+        const words = transcriptText.trim().split(/\s+/);
+        const fallbackTitle = words.slice(0, 7).join(' ');
+        const fallbackDesc = words.length > 7 ? words.slice(7).join(' ') : '';
+        setTitle(fallbackTitle || transcriptText);
+        if (fallbackDesc) setDescription(fallbackDesc);
       }
 
       setVoiceState('complete');
       setStatusMessage('Transcription complete. Details extracted.');
     } catch (err: any) {
       console.error('Error analyzing transcript:', err);
-      // Fallback
       const words = transcriptText.trim().split(/\s+/);
-      const fallbackTitle = words.slice(0, 7).join(' ');
-      const fallbackDesc = words.length > 7 ? words.slice(7).join(' ') : '';
-      setTitle(fallbackTitle || transcriptText);
-      if (fallbackDesc) setDescription(fallbackDesc);
+      setTitle(words.slice(0, 7).join(' ') || transcriptText);
       setVoiceState('complete');
       setStatusMessage('Transcription complete. Details extracted.');
     }
