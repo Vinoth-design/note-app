@@ -132,13 +132,15 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 export const dbService = {
-  // Real-time synchronization of notes with Firestore + Local Fallback
+  // Real-time synchronization of notes with Cloud Firestore
   subscribeNotes(userId: string, onUpdate: (notes: Note[]) => void, onError?: (error: Error) => void) {
     const key = getLocalKey('notes', userId);
     
-    // Immediately emit local items so UI opens instantly without hanging
+    // Emit local cache first for zero latency
     const initialLocal = getLocalItems<Note>(key, []);
-    onUpdate(initialLocal);
+    if (initialLocal.length > 0) {
+      onUpdate(initialLocal);
+    }
 
     let unsubscribeFirestore = () => {};
     try {
@@ -177,19 +179,19 @@ export const dbService = {
               userId: data.userId || undefined,
             });
           });
-          // Sort client-side to avoid index errors
+          // Sort client-side
           notes.sort((a, b) => b.updatedAt - a.updatedAt);
           setLocalItems(key, notes);
           onUpdate(notes);
         },
         (error) => {
-          console.warn('Firestore notes subscription notice (using local storage):', error?.message || error);
+          console.error('Firestore notes subscription error:', error);
           onUpdate(getLocalItems<Note>(key, []));
           if (onError) onError(error);
         }
       );
     } catch (error: any) {
-      console.warn('Firestore subscription exception:', error);
+      console.error('Firestore subscription exception:', error);
       onUpdate(getLocalItems<Note>(key, []));
       if (onError) onError(error);
     }
@@ -200,13 +202,13 @@ export const dbService = {
   // Save a note to Cloud Firestore + Local Cache
   async saveNote(note: Note, userId: string): Promise<void> {
     const key = getLocalKey('notes', userId);
-    const updatedNote = {
+    const updatedNote: Note = {
       ...note,
       userId,
       updatedAt: Date.now(),
     };
 
-    // Save locally first for instant speed
+    // Save locally for instant UI response
     const currentLocal = getLocalItems<Note>(key, []);
     const idx = currentLocal.findIndex(n => n.id === note.id);
     if (idx >= 0) {
@@ -216,13 +218,15 @@ export const dbService = {
     }
     setLocalItems(key, currentLocal);
 
-    // Save to Firestore
+    // Save to Cloud Firestore
     try {
       const noteRef = doc(db, NOTES_COLLECTION, note.id);
       const cleanedNote = cleanUndefined(updatedNote);
       await setDoc(noteRef, cleanedNote, { merge: true });
-    } catch (err) {
-      console.warn('Firestore note save notice:', err);
+    } catch (err: any) {
+      console.error('CRITICAL FIRESTORE SAVE NOTE ERROR:', err?.message || err, err);
+      // Re-throw so caller knows if Cloud Firestore rejected the save
+      throw err;
     }
   },
 
@@ -252,11 +256,11 @@ export const dbService = {
       const noteRef = doc(db, NOTES_COLLECTION, id);
       await deleteDoc(noteRef);
     } catch (err) {
-      console.warn('Firestore note delete notice:', err);
+      console.error('Firestore note delete error:', err);
     }
   },
 
-  // Real-time synchronization of workspaces with Cloud Firestore + Local Fallback
+  // Real-time synchronization of workspaces with Cloud Firestore
   subscribeWorkspaces(userId: string, onUpdate: (workspaces: Workspace[]) => void, onError?: (error: Error) => void) {
     const key = getLocalKey('workspaces', userId);
     const defaultWorkspace: Workspace = {
@@ -303,13 +307,13 @@ export const dbService = {
           }
         },
         (error) => {
-          console.warn('Firestore workspaces subscription notice:', error?.message || error);
+          console.error('Firestore workspaces subscription error:', error);
           onUpdate(getLocalItems<Workspace>(key, [defaultWorkspace]));
           if (onError) onError(error);
         }
       );
     } catch (error: any) {
-      console.warn('Firestore workspaces subscription exception:', error);
+      console.error('Firestore workspaces subscription exception:', error);
       onUpdate(getLocalItems<Workspace>(key, [defaultWorkspace]));
       if (onError) onError(error);
     }
@@ -335,7 +339,8 @@ export const dbService = {
       const wsRef = doc(db, WORKSPACES_COLLECTION, workspace.id);
       await setDoc(wsRef, cleanUndefined(updated), { merge: true });
     } catch (err) {
-      console.warn('Firestore workspace save notice:', err);
+      console.error('Firestore workspace save error:', err);
+      throw err;
     }
   },
 
@@ -366,7 +371,7 @@ export const dbService = {
       const wsRef = doc(db, WORKSPACES_COLLECTION, id);
       await deleteDoc(wsRef);
     } catch (err) {
-      console.warn('Firestore workspace delete notice:', err);
+      console.error('Firestore workspace delete error:', err);
     }
   },
 
@@ -381,7 +386,7 @@ export const dbService = {
       const userRef = doc(db, USERS_COLLECTION, user.uid);
       await setDoc(userRef, cleanUndefined(user), { merge: true });
     } catch (err) {
-      console.warn('Firestore user profile save notice:', err);
+      console.error('Firestore user profile save error:', err);
     }
   },
 
@@ -407,7 +412,7 @@ export const dbService = {
         };
       }
     } catch (err) {
-      console.warn('Firestore user profile get notice:', err);
+      console.error('Firestore user profile get error:', err);
     }
     return null;
   },
@@ -426,7 +431,7 @@ export const dbService = {
       };
       await setDoc(logRef, entry);
     } catch (err) {
-      console.warn('Audit log notice:', err);
+      console.warn('Audit log error:', err);
     }
   },
 
@@ -463,12 +468,12 @@ export const dbService = {
           }
         },
         (error) => {
-          console.warn('Firestore audit logs subscription notice:', error?.message || error);
+          console.error('Firestore audit logs subscription error:', error);
           if (onError) onError(error);
         }
       );
     } catch (err: any) {
-      console.warn('Firestore audit logs exception:', err);
+      console.error('Firestore audit logs exception:', err);
       if (onError) onError(err);
     }
 
@@ -507,7 +512,7 @@ export const dbService = {
         await deleteDoc(doc(db, NOTES_COLLECTION, d.id));
       }
     } catch (err) {
-      console.warn('Firestore account purge notice:', err);
+      console.error('Firestore account purge error:', err);
     }
   }
 };
