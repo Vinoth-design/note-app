@@ -50,7 +50,7 @@ export default function AuthView({ auth, authNotice, setAuthNotice }: AuthViewPr
       } else if (errorCode === 'auth/popup-blocked' || errorMessage.includes('popup-blocked')) {
         setAuthNotice('Pop-up window was blocked by your browser. Use the "Sign In via Redirect" button below or allow popups.');
       } else if (errorCode === 'auth/unauthorized-domain') {
-        setAuthNotice(`[${errorCode}] The domain "${window.location.hostname}" is not authorized in Firebase Console (Authentication -> Settings -> Authorized domains).`);
+        setAuthNotice(`[${errorCode}] Domain "${window.location.hostname}" is not authorized for Google SSO in Firebase Console. Click "Continue as Demo User" below to enter your workspace instantly!`);
       } else if (errorCode === 'auth/operation-not-allowed') {
         setAuthNotice(`[${errorCode}] Google Sign-In provider is disabled in Firebase Console (Authentication -> Sign-in method -> Google).`);
       } else {
