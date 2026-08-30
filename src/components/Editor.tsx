@@ -720,7 +720,7 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
                     {
                       parts: [
                         {
-                          text: `Summarize the following description into an extremely concise single sentence or brief phrase (maximum 8 to 10 words). Return ONLY the concise summary text, without quotes or introductory remarks:\n\n${descriptionText}`,
+                          text: `Summarize the ENTIRE description below (which may contain multiple lines, bullet points, or list items) into a single concise summary phrase (maximum 8 to 10 words). Cover ALL main tasks or items mentioned in the text. Return ONLY the concise summary text, without quotes, bullet numbers, or introductory remarks:\n\n${descriptionText}`,
                         },
                       ],
                     },
@@ -760,18 +760,23 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
         }
       }
 
-      // Priority 3: Smart NLP Abstractive Summarizer Engine
+      // Priority 3: Whole-Description Comprehensive Summarizer Engine
       if (!summaryResult) {
         const cleaned = descriptionText.replace(/<[^>]*>/g, '').trim();
-        const sentences = cleaned.split(/(?<=[.?!])\s+/).filter(s => s.trim().length > 0);
-        
-        if (sentences.length > 0) {
-          const firstSentence = sentences[0].replace(/^[-*•]\s*/, '').trim();
-          const words = firstSentence.split(/\s+/);
-          if (words.length <= 10) {
-            summaryResult = firstSentence;
+        const rawLines = cleaned
+          .split(/\r?\n+/)
+          .map(line => line.replace(/^[\s\-*•\d+.\/()]+/, '').trim())
+          .filter(line => line.length > 0);
+
+        if (rawLines.length === 1) {
+          const words = rawLines[0].split(/\s+/);
+          summaryResult = words.length <= 10 ? rawLines[0] : words.slice(0, 9).join(' ') + '...';
+        } else if (rawLines.length > 1) {
+          const itemPhrases = rawLines.map(line => line.split(/\s+/).slice(0, 3).join(' '));
+          if (itemPhrases.length === 2) {
+            summaryResult = `${itemPhrases[0]} & ${itemPhrases[1]}`;
           } else {
-            summaryResult = words.slice(0, 9).join(' ') + '...';
+            summaryResult = `${itemPhrases[0]}, ${itemPhrases[1]} & ${itemPhrases[2]}`;
           }
         } else {
           summaryResult = cleaned.slice(0, 50);
@@ -780,9 +785,10 @@ export default function Editor({ note, onUpdateNote, onDeleteNote, isSaving }: E
 
       if (summaryResult) {
         const finalNote = summaryResult
-          .replace(/^["'`*#]+|["'`*#]+$/g, '')
+          .replace(/^["'`*#\d+.\s]+|["'`*#\s]+$/g, '')
           .trim();
-        handleUpdateField(updateId, 'note', finalNote);
+        const formattedNote = finalNote.charAt(0).toUpperCase() + finalNote.slice(1);
+        handleUpdateField(updateId, 'note', formattedNote);
       }
     } catch (error) {
       console.error('Error during AI summarization:', error);
