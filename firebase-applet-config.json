@@ -1,10 +1,9 @@
 {
-  "projectId": "argon-griffin-qjwpf",
-  "appId": "1:35031033932:web:88ae1a1c73b91f9f922ce9",
+  "projectId": "vinoth-note-app",
+  "appId": "1:35031033932:web:vinothnoteapp",
   "apiKey": "AIzaSyBOKjrZf7IgSox2KpBgWvb6UNfXBDgGWvM",
-  "authDomain": "argon-griffin-qjwpf.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-notionnoteapp-78c0c1b9-7662-4c62-943d-715ec2f49b8b",
-  "storageBucket": "argon-griffin-qjwpf.firebasestorage.app",
+  "authDomain": "vinoth-note-app.firebaseapp.com",
+  "storageBucket": "vinoth-note-app.firebasestorage.app",
   "messagingSenderId": "35031033932",
   "measurementId": ""
 }

@@ -13,7 +13,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultAppletConfig.appId || "1:123456789:web:abcdef",
 };
 
-const customDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || defaultAppletConfig.firestoreDatabaseId;
+const customDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || (defaultAppletConfig as Record<string, string>).firestoreDatabaseId;
 
 let app;
 if (!getApps().length) {
